@@ -1,0 +1,114 @@
+import imaplib
+import email
+from email.header import decode_header
+import time
+import subprocess  # To run terminal commands
+
+# Email account credentials
+EMAIL = 'your-email@gmail.com'
+PASSWORD = 'your-app-password'
+IMAP_SERVER = 'imap.gmail.com'
+IMAP_PORT = 993
+
+# MAC address of the device to wake up (replace with your device's MAC address)
+MAC_ADDRESS = '7B:2A:83:DB:71:78'
+INTERFACE = 'wlan0'  # The network interface to use
+
+# Keyword or phrase to search for in the email body
+TARGET_PHRASE = "Wake up device"
+
+# Function to log in and connect to the mailbox (without closing)
+def connect_email():
+    try:
+        # Connect to the IMAP server and login
+        mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+        mail.login(EMAIL, PASSWORD)
+        mail.select("inbox")  # Select the inbox
+        return mail
+    except Exception as e:
+        print(f"Error connecting to email: {str(e)}")
+        return None
+
+# Function to extract the email body
+def get_email_body(msg):
+    body = None
+    if msg.is_multipart():
+        for part in msg.walk():
+            # If the part is text/plain or text/html
+            if part.get_content_type() == "text/plain":
+                body = part.get_payload(decode=True).decode('utf-8')
+                break  # Only get plain text version
+    else:
+        # For non-multipart emails (simple emails)
+        body = msg.get_payload(decode=True).decode('utf-8')
+    return body
+
+# Function to check for new emails and read the body
+def check_email(mail):
+    try:
+        # Search for all emails (including seen) and sort by latest first
+        status, messages = mail.search(None, "ALL")
+        
+        if status == "OK" and messages[0]:
+            # Fetch the latest email by using the highest message number (latest)
+            latest_email_id = messages[0].split()[-1]
+            
+            # Fetch the latest email
+            status, msg_data = mail.fetch(latest_email_id, '(RFC822)')
+            for response_part in msg_data:
+                if isinstance(response_part, tuple):
+                    msg = email.message_from_bytes(response_part[1])
+
+                    # Decode the email subject for debugging purposes
+                    subject, encoding = decode_header(msg["Subject"])[0]
+                    if isinstance(subject, bytes):
+                        subject = subject.decode(encoding if encoding else "utf-8")
+
+                    # Print subject for debugging
+                    #print(f"Last email received with subject: {subject}")
+
+                    # Get the email body
+                    body = get_email_body(msg)
+
+                    # Print the body for debugging purposes
+                    #print(f"Last email body:\n{body}")
+
+                    # If the body contains the target phrase
+                    if TARGET_PHRASE in body:
+                        print(f"Found target phrase in email body. Executing etherwake command...")
+                        # Run the etherwake command
+                        run_etherwake(MAC_ADDRESS, INTERFACE)
+                        return True
+    except Exception as e:
+        print(f"Error checking email: {str(e)}")
+    return False
+
+# Function to run the etherwake command in Linux terminal
+def run_etherwake(mac_address, interface):
+    try:
+        # Build the etherwake command
+        command = ['sudo', 'etherwake', '-b', mac_address, '-i', interface]
+        # Execute the command
+        subprocess.run(command, check=True)
+        print(f"etherwake command executed: {command}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error executing etherwake command: {str(e)}")
+
+if __name__ == '__main__':
+    # Connect to the email once at the start
+    mail = connect_email()
+    if mail:
+        try:
+            # Continuously check for the email every minute without closing the connection
+            while True:
+                check_email(mail)
+                print("No matching email found. Checking again in 1 minute...")
+                time.sleep(60)
+        except KeyboardInterrupt:
+            print("\nScript interrupted by user. Exiting...")
+        finally:
+            #mail.logout()
+            print("Finally")
+            #print("Logged out from email.")
+    else:
+        print("Could not connect to email. Please check your credentials or connection.")
